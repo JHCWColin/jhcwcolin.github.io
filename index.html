@@ -1,0 +1,942 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+	<meta charset="UTF-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1.0">
+	<title>升旗快报生成器</title>
+	<meta http-equiv="Content-Security-Policy" content="img-src 'self' data: blob: https:">
+	<script src="https://cdn.tailwindcss.com"></script>
+	<style>
+		/* 1. 调整 Body 样式以支持伪元素背景，同时移除所有背景图片相关的设置 */
+		body {
+		    font-family: 'Inter', sans-serif;
+		    /* 保持颜色过渡，移除图片过渡，因为图片移到 ::before 了 */
+		    transition: background-color 0.3s ease;
+            position: relative; /* 确保内容在背景之上 */
+            z-index: 1; 
+		    /* 移除背景图片相关属性, 这些将移至 ::before */
+		    background-image: none !important;
+            background-color: transparent !important;
+		    background-size: auto; 
+		    background-position: initial; 
+		    background-attachment: initial; 
+		    background-repeat: initial; 
+		}
+		
+		/* 2. 使用 ::before 元素作为固定背景层，应用背景图片和滤镜 */
+        body::before {
+            content: "";
+            position: fixed; 
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            z-index: -1; /* 放在所有内容之下 */
+            background-size: cover;
+            background-position: center;
+            background-attachment: fixed;
+            background-repeat: no-repeat;
+            transition: filter 0.3s ease; /* 过渡滤镜效果 */
+        }
+		
+		/* ====== 通用玻璃效果容器 (默认风格 - 液态玻璃) ====== */
+		.container {
+		    max-width: 1024px;
+		    padding: 24px;
+		    border-radius: 24px;
+		    /* 默认液态玻璃效果 */
+		    background: rgba(255, 255, 255, 0.25);
+		    backdrop-filter: blur(20px) saturate(180%);
+		    -webkit-backdrop-filter: blur(20px) saturate(180%);
+		    border: 1px solid rgba(255, 255, 255, 0.4);
+		    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.2);
+		    transition: all 0.3s ease;
+		}
+		
+		/* ====== Canvas 区域 ====== */
+		canvas {
+		    border: 1px solid rgba(255, 255, 255, 0.3);
+		    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+		    background: rgba(255, 255, 255, 0.2);
+		    backdrop-filter: blur(12px);
+		    -webkit-backdrop-filter: blur(12px);
+		    border-radius: 16px;
+		}
+		
+		/* ====== 输入框组 ====== */
+		.input-group input,
+		.input-group textarea,
+		.input-group button,
+		/* 确保设置区域的输入框也应用相同样式 */
+		#moreSettings input { 
+		    padding: 12px;
+		    border-radius: 12px;
+		    border: 1px solid rgba(255, 255, 255, 0.3);
+		    background: rgba(255, 255, 255, 0.25);
+		    backdrop-filter: blur(10px);
+		    -webkit-backdrop-filter: blur(10px);
+		    color: #111;
+		    transition: all 0.2s ease-in-out;
+		}
+		
+		.input-group input:focus,
+		.input-group textarea:focus,
+		#moreSettings input:focus {
+		    outline: none;
+		    border-color: rgba(59, 130, 246, 0.6);
+		    box-shadow: 0 0 0 4px rgba(59, 130, 246, 0.25);
+		}
+		
+		/* ====== 弹窗模态 ====== */
+		.crop-modal {
+		    display: none;
+		    position: fixed;
+		    z-index: 1000;
+		    left: 0;
+		    top: 0;
+		    width: 100%;
+		    height: 100%;
+		    background-color: rgba(0, 0, 0, 0.6);
+		    backdrop-filter: blur(12px);
+		    -webkit-backdrop-filter: blur(12px);
+		    justify-content: center;
+		    align-items: center;
+		}
+		
+		.crop-container {
+		    position: relative;
+		    background: rgba(255, 255, 255, 0.25);
+		    backdrop-filter: blur(20px) saturate(180%);
+		    -webkit-backdrop-filter: blur(20px) saturate(180%);
+		    padding: 24px;
+		    border-radius: 20px;
+		    box-shadow: 0 10px 25px rgba(0, 0, 0, 0.25);
+		    width: 900px;
+		    height: 600px;
+		    display: flex;
+		    flex-direction: column;
+		    align-items: center;
+		    border: 1px solid rgba(255, 255, 255, 0.4);
+		}
+		
+		/* ====== Light Mode ====== */
+		html[data-mode='light'] body::before { /* 目标更改为 body::before */
+		    background-image: url('light.JPG');
+            filter: none; /* 确保默认模式无滤镜 */
+		}
+		
+		html[data-mode='light'] .container {
+		    /* 液态玻璃在 Light 模式下的样式 */
+		    background: rgba(255, 255, 255, 0.35);
+		    color: #111;
+		}
+		
+		/* ====== Dark Mode ====== */
+		html[data-mode='dark'] {
+		    color: #e2e8f0;
+		}
+		
+		html[data-mode='dark'] body::before { /* 目标更改为 body::before */
+		    background-image: url('background.JPG');
+            filter: none; /* 确保默认模式无滤镜 */
+		}
+		
+		html[data-mode='dark'] .container {
+		    /* 液态玻璃在 Dark 模式下的样式 */
+		    background: rgba(30, 30, 30, 0.35);
+		    backdrop-filter: blur(20px) saturate(180%);
+		    -webkit-backdrop-filter: blur(20px) saturate(180%);
+		    color: #e2e8f0;
+		    border: 1px solid rgba(255, 255, 255, 0.2);
+		}
+		
+		html[data-mode='dark'] .input-group input,
+		html[data-mode='dark'] .input-group textarea,
+		/* 确保设置区域的输入框也应用深色模式样式 */
+		html[data-mode='dark'] #moreSettings input {
+		    background: rgba(255, 255, 255, 0.15);
+		    color: #e2e8f0;
+		    border: 1px solid rgba(255, 255, 255, 0.2);
+		}
+		
+		/* ====== 全息显示模式 (全局应用) 的背景图片变暗规则 ====== */
+		html[data-ui-style='holographic'] body::before {
+		    /* 当 UI 风格为全息显示时，将背景图片亮度降低到 80% */
+		    filter: brightness(0.8);
+		}
+
+		
+		/* 扁平化模式 (全局应用) - 具有轻微透明度 */
+		.flat-mode {
+		    /* 调整为接近白色的高透明度背景 */
+		    background: rgba(255, 255, 255, 0.9) !important; 
+		    backdrop-filter: none !important; /* 移除模糊 */
+		    -webkit-backdrop-filter: none !important;
+		    border: 1px solid #d1d5db !important;
+		    box-shadow: none !important; /* 没有阴影 */
+		    color: #111 !important; /* 确保文字可读 */
+		}
+		
+		/* 扁平化模式在深色主题下的覆盖 - 具有轻微透明度 */
+		html[data-mode='dark'] .flat-mode {
+		    /* 调整为接近黑色的高透明度背景 */
+		    background: rgba(39, 39, 42, 0.9) !important;
+		    color: #e2e8f0 !important;
+		    border: 1px solid #3f3f46 !important;
+		}
+		
+		/* ====== 全息显示模式 (全局应用) ====== */
+		.holographic-mode {
+		    background: transparent !important; /* 全透明 */
+		    backdrop-filter: none !important; /* 移除模糊 */
+		    -webkit-backdrop-filter: none !important;
+		    border: none !important; /* 移除边框 */
+		    box-shadow: none !important; /* 移除阴影 */
+		    padding: 0px !important; /* 移除内边距，让内容更贴近 */
+		    color: inherit !important; /* 继承父级（body）的文字颜色 */
+		}
+		
+		/* ====== UI 风格切换按钮基础样式 (根据主题变化) ====== */
+		.ui-style-btn {
+		    /* 默认 Light Mode 样式：白色背景，深色文字 */
+		    background-color: white;
+		    color: #1f2937; /* Gray-800 */
+		    border: 1px solid #d1d5db; /* Gray-300 */
+		    box-shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.1), 0 1px 2px 0 rgba(0, 0, 0, 0.06);
+		}
+		
+		.ui-style-btn:hover {
+		    background-color: #f3f4f6; /* Gray-100 */
+		}
+		
+		html[data-mode='dark'] .ui-style-btn {
+		    /* Dark Mode 样式：深灰色背景，白色文字 */
+		    background-color: #374151; /* Gray-700 */
+		    color: white;
+		    border: 1px solid #4b5563; /* Gray-600 */
+		}
+		
+		html[data-mode='dark'] .ui-style-btn:hover {
+		    background-color: #4b5563; /* Gray-600 */
+		}
+		
+		/* ====== 激活的 UI 风格按钮 (始终是蓝色，覆盖主题色) ====== */
+		.active-style-btn {
+		    background-color: #2563eb !important; /* Blue-600 */
+		    color: white !important;
+		    border-color: #2563eb !important;
+		    box-shadow: 0 4px 6px -1px rgba(37, 99, 235, 0.5), 0 2px 4px -2px rgba(37, 99, 235, 0.5) !important;
+		}
+		
+		.active-style-btn:hover {
+		    background-color: #1d4ed8 !important; /* Blue-700 */
+		}
+
+	</style>
+</head>
+<body class="p-8 flex flex-col items-center min-h-screen">
+	<div class="container rounded-2xl p-6 shadow-xl text-center mb-8">
+		<b>
+			<p style="font-size: 34px; font-family: 楷体;" id="hitokoto">正在加载中</p>
+		</b>
+		<p style="font-size: 28px; font-family: 楷体;" id="from" align="right"></p>
+	</div>
+	<script>
+		fetch('https://v1.hitokoto.cn/?c=a&c=b&c=c&c=d')
+		    .then(response => response.json())
+		    .then(data => {
+		        const hitokoto = document.getElementById('hitokoto')
+		        hitokoto.innerText = data.hitokoto
+		        const from = document.getElementById('from')
+		        from.innerText = "《" + data.from + "》"
+		    })
+		    .catch(console.error)
+		
+	</script>
+	<div class="container rounded-2xl p-6 shadow-xl flex flex-col md:flex-row gap-8 relative">
+		<button id="themeToggleBtn" class="absolute top-4 left-4 p-2 rounded-full text-gray-600 hover:bg-gray-200 focus:outline-none transition-colors duration-300">
+			<svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+				<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20.354 15.354A9 9 0 018.646 3.646 9.003 9.003 0 0012 21a9.003 9.003 0 008.354-5.646z" />
+			</svg>
+		</button>
+		<div class="md:w-3/5 w-full flex-shrink-0 flex justify-center items-center p-4">
+			<canvas id="flagBulletinCanvas" class="w-full h-auto rounded-xl"></canvas>
+		</div>
+		<div class="md:w-2/5 w-full flex flex-col gap-6">
+			<h1 class="text-3xl font-bold text-center">升旗快报生成器</h1>
+			<p class="text-sm text-center">输入文字并上传图片，自动生成升旗快报。</p>
+			<div class="input-group flex flex-col gap-4">
+				<label for="text1" class="font-semibold">周序数</label>
+				<input type="text" id="text1" placeholder="请输入一个阿拉伯整数。（≤99）" class="w-full rounded-lg">
+				<label for="text2" class="font-semibold">班级介绍</label>
+				<textarea id="text2" placeholder="输入班级介绍。例如：高一一班是一个奇怪的班集体。" rows="4" class="w-full rounded-lg"></textarea>
+				<label for="text3" class="font-semibold">人员信息</label>
+				<textarea id="text3" placeholder="" rows="4" class="w-full rounded-lg">主持人 XXX
+旗手 XXX
+护旗手 XXX、XXX及高XX班全体同学
+发言人 XXX</textarea>
+			</div>
+			<div class="input-group">
+				<label class="block font-semibold mb-2">上传图片</label>
+				<input type="file" id="imageInput" accept="image/*" class="block w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100 cursor-pointer">
+			</div>
+			<button id="saveImageBtn" class="mt-4 px-6 py-3 bg-green-500 text-white font-semibold rounded-lg shadow-md hover:bg-green-600 transition">请右键图片将图片保存到本地。</button>
+		</div>
+	</div>		
+	
+	<!-- 新增的 "更多设置" 容器 -->
+	<div class="container rounded-2xl p-6 shadow-xl mt-8 flex flex-col gap-6" id="moreSettings">
+		<h2 class="text-2xl font-bold text-center">更多设置</h2>
+		
+		<!-- 第一行: UI 背景风格切换 -->
+		<div class="flex flex-col md:flex-row justify-between items-center border-b pb-4 border-gray-300/50">
+			<label class="font-semibold text-lg text-left w-full md:w-1/3">UI 背景风格切换</label>
+			<div class="flex gap-4 mt-2 md:mt-0">
+				<!-- 统一使用 ui-style-btn 类，移除硬编码颜色 -->
+				<button id="glass-btn" class="px-4 py-2 font-medium rounded-full transition shadow-lg ui-style-btn">液态玻璃风格</button>
+				<button id="flat-btn" class="px-4 py-2 font-medium rounded-full transition shadow-lg ui-style-btn">扁平化风格</button>
+				<button id="holographic-btn" class="px-4 py-2 font-medium rounded-full transition shadow-lg ui-style-btn">全息显示</button>
+			</div>
+		</div>
+		
+		<!-- 第二行: 自定义文字坐标设置 -->
+		<div class="flex flex-col gap-4 border-b pb-4 border-gray-300/50">
+			<label class="font-semibold text-lg text-left w-full">自定义文字坐标（Text 2 / Text 3）</label>
+			<div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+				<!-- Text 2 Coordinates -->
+				<div class="flex flex-col gap-2">
+					<label for="text2X" class="text-sm font-medium">班级介绍 (Text 2) X 坐标</label>
+					<input type="number" id="text2X" value="2350" min="0" class="w-full rounded-lg p-2">
+				</div>
+				<div class="flex flex-col gap-2">
+					<label for="text2Y" class="text-sm font-medium">班级介绍 (Text 2) Y 坐标</label>
+					<input type="number" id="text2Y" value="1892" min="0" class="w-full rounded-lg p-2">
+				</div>
+				<!-- Text 3 Coordinates -->
+				<div class="flex flex-col gap-2">
+					<label for="text3X" class="text-sm font-medium">人员信息 (Text 3) X 坐标</label>
+					<input type="number" id="text3X" value="270" min="0" class="w-full rounded-lg p-2">
+				</div>
+				<div class="flex flex-col gap-2">
+					<label for="text3Y" class="text-sm font-medium">人员信息 (Text 3) Y 坐标</label>
+					<input type="number" id="text3Y" value="2240" min="0" class="w-full rounded-lg p-2">
+				</div>
+			</div>
+		</div>
+		
+		<!-- 第三行: 开源许可证按钮 (修改后的内容) -->
+		<div class="flex justify-start border-b pb-4 border-gray-300/50">
+			<button id="licenseToggleBtn" class="font-semibold text-lg text-blue-600 hover:text-blue-800 transition duration-150 focus:outline-none">
+				显示开源许可证
+			</button>
+		</div>
+		
+		<!-- 第四行: 开源许可证内容 (默认隐藏) -->
+		<div id="licenseContent" class="hidden pt-4 text-sm text-left whitespace-pre-wrap rounded-lg p-4 bg-gray-100/50 dark:bg-gray-700/50 border border-gray-300/50 dark:border-gray-600/50">
+			<p class="font-bold mb-2">开源许可证 (MIT License)</p>
+MIT License
+
+Copyright (c) 2025 Colin
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+		</div>
+
+	</div>
+    	<div class="container rounded-2xl p-6 shadow-xl mt-8 flex flex-col items-center">
+		<h2 class="text-2xl font-bold mb-4">原作者：JHCWColin王景弘</h2>
+		<div class="flex flex-col items-center gap-4">
+			<p class="text-center max-w-2xl"> 青岛五十八中信息技术部出品，必属精品！ <br> 如果对此有改进建议，请通过以下方式联系我。 </p>
+			<p>邮箱: <a href="mailto:jhcwcolin@gmail.com">jhcwcolin@gmail.com</a>
+			</p>
+			<img src="sticker.PNG" alt="sticker" class="max-w-xs rounded-lg shadow-md">
+            <p style="font-size: 25px;">更新内容</p>
+            <p>V1.1(build2509070908)更新内容：1、修复了图片异常拉伸的bug。2、文字输入区域可以回车换行。 <br>
+			<br>V2.0(build2511141801)更新内容：1、canvas区域分辨率提升至四倍。2、液态玻璃效果支持。3、新增第三方励志语言展示区。<br>
+            <br>V2.1(build2511151706)更新内容：1、更多设置容器可以用于切换UI背景和自定义部分文字位置。2、调整部分文字在暗色模式下的颜色。
+		</p>
+		</div>
+	</div>
+	
+	<div style="height: 40px;"></div>
+	<div id="cropModal" class="crop-modal">
+		<div class="crop-container">
+			<h2 class="text-2xl font-bold mb-4">裁剪图片 (16:9 比例)</h2>
+			<div class="crop-canvas-container flex-grow w-full h-full overflow-hidden rounded-lg">
+				<canvas id="cropCanvas" class="w-full h-full"></canvas>
+			</div>
+			<button id="confirmCropBtn" class="mt-4 px-6 py-2 bg-blue-600 text-white font-semibold rounded-lg shadow-md hover:bg-blue-700 transition">确定</button>
+		</div>
+	</div>
+	<script>
+		document.addEventListener("DOMContentLoaded", function() {
+		    const glassBtn = document.getElementById("glass-btn");
+		    const flatBtn = document.getElementById("flat-btn");
+		    const holographicBtn = document.getElementById("holographic-btn");
+		    const containers = document.querySelectorAll(".container");
+		    const uiStyleButtons = document.querySelectorAll(".ui-style-btn"); // 选中所有风格切换按钮
+		    
+            // License Toggle Elements
+            const licenseToggleBtn = document.getElementById('licenseToggleBtn');
+            const licenseContent = document.getElementById('licenseContent');
+
+
+		    function applyStyle(mode) {
+		        containers.forEach(container => {
+		            // 确保先移除所有模式类
+		            container.classList.remove("flat-mode", "holographic-mode");
+		
+		            if (mode === 'flat') {
+		                container.classList.add("flat-mode");
+		            } else if (mode === 'holographic') {
+		                container.classList.add("holographic-mode");
+		            }
+		        });
+		        
+		        // 1. 移除所有按钮的激活状态
+		        uiStyleButtons.forEach(btn => {
+		            btn.classList.remove("active-style-btn");
+		        });
+		        
+		        // 2. 根据当前模式设置激活状态
+		        let activeButton;
+		        if (mode === 'glass') {
+		            activeButton = glassBtn;
+		        } else if (mode === 'flat') {
+		            activeButton = flatBtn;
+		        } else if (mode === 'holographic') {
+		            activeButton = holographicBtn;
+		        }
+		
+		        if (activeButton) {
+		            activeButton.classList.add("active-style-btn");
+		            // 3. 将当前风格保存到 localStorage
+		            localStorage.setItem('ui_style', mode);
+                    
+                    // NEW: Set the data attribute on the HTML element for CSS targeting
+                    document.documentElement.setAttribute('data-ui-style', mode);
+		        } else {
+                    // NEW: Handle default/initial case
+                    document.documentElement.setAttribute('data-ui-style', 'glass');
+                }
+		    }
+            
+            // 尝试从 localStorage 加载上次保存的风格，默认为 'glass'
+            const savedStyle = localStorage.getItem('ui_style') || 'glass';
+            applyStyle(savedStyle);
+		
+		    // 切换到液态玻璃模式
+		    if (glassBtn) {
+		        glassBtn.addEventListener("click", function() {
+		            applyStyle('glass');
+		        });
+		    }
+		
+		    // 切换到扁平化模式
+		    if (flatBtn) {
+		        flatBtn.addEventListener("click", function() {
+		            applyStyle('flat');
+		        });
+		    }
+
+            // 切换到全息显示模式
+            if (holographicBtn) {
+                holographicBtn.addEventListener("click", function() {
+                    applyStyle('holographic');
+                });
+            }
+
+            // ====== 开源许可证切换逻辑 ======
+            if (licenseToggleBtn) {
+                licenseToggleBtn.addEventListener('click', () => {
+                    // 切换 hidden 类来显示或隐藏内容
+                    licenseContent.classList.toggle('hidden');
+
+                    // 更新按钮文本
+                    if (licenseContent.classList.contains('hidden')) {
+                        licenseToggleBtn.textContent = '显示开源许可证';
+                    } else {
+                        licenseToggleBtn.textContent = '收起开源许可证';
+                    }
+                });
+            }
+            // ================================
+		});
+	</script>
+	<script>
+		const canvas = document.getElementById('flagBulletinCanvas');
+		const ctx = canvas.getContext('2d');
+		const text1Input = document.getElementById('text1');
+		const text2Input = document.getElementById('text2');
+		const text3Input = document.getElementById('text3');
+		const imageInput = document.getElementById('imageInput');
+		const cropModal = document.getElementById('cropModal');
+		const cropCanvas = document.getElementById('cropCanvas');
+		const cropCtx = cropCanvas.getContext('2d');
+		const confirmCropBtn = document.getElementById('confirmCropBtn');
+		const saveImageBtn = document.getElementById('saveImageBtn');
+		
+		// 新增的自定义坐标输入框
+		const text2XInput = document.getElementById('text2X');
+		const text2YInput = document.getElementById('text2Y');
+		const text3XInput = document.getElementById('text3X');
+		const text3YInput = document.getElementById('text3Y');
+
+		// Theme toggle logic
+		const themeToggleBtn = document.getElementById('themeToggleBtn');
+		const htmlElement = document.documentElement;
+		
+		// Apply saved theme on load
+		const savedTheme = localStorage.getItem('theme');
+		if (savedTheme) {
+		    htmlElement.setAttribute('data-mode', savedTheme);
+		} else {
+		    htmlElement.setAttribute('data-mode', 'light');
+		}
+		
+		themeToggleBtn.addEventListener('click', () => {
+		    const currentMode = htmlElement.getAttribute('data-mode');
+		    const newMode = currentMode === 'light' ? 'dark' : 'light';
+		    htmlElement.setAttribute('data-mode', newMode);
+		    localStorage.setItem('theme', newMode);
+		    updateThemeButton(newMode);
+		});
+		
+		function updateThemeButton(mode) {
+		    if (mode === 'dark') {
+		        themeToggleBtn.innerHTML = `<svg
+		                                            xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+		                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 3v1m0 16v1m9-9h-1M4 12H3m15.364 6.364l-.707-.707M6.343 6.343l-.707-.707m12.728 0l-.707.707M6.343 17.657l-.707.707M16 12a4 4 0 11-8 0 4 4 0 018 0z" />
+		                                        </svg>
+		        `;
+		    } else {
+		        themeToggleBtn.innerHTML = `
+		            
+		                                        
+		                                        
+		                                        <svg
+		                                            xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+		                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20.354 15.354A9 9 0 018.646 3.646 9.003 9.003 0 0012 21a9.003 9.003 0 008.354-5.646z" />
+		                                        </svg>
+		        `;
+		    }
+		}
+		
+		// Initial button update
+		updateThemeButton(htmlElement.getAttribute('data-mode'));
+		
+		const BULLETIN_WIDTH = 4764;
+		const BULLETIN_HEIGHT = 3368;
+		const CROP_RATIO = 16 / 9;
+		const HANDLE_SIZE = 48;
+		const HIT_AREA = 60;
+		
+		// Use constants for the user image's target dimensions to ensure a perfect 16:9 ratio.
+		// 这两个常量确保了用户图片的最终显示尺寸是精确的16:9比例，避免了拉伸。
+		const USER_IMAGE_WIDTH = 475*4;
+		const USER_IMAGE_HEIGHT = USER_IMAGE_WIDTH / CROP_RATIO;
+		const TARGET_X = 2360;
+		const TARGET_Y = 460;
+		
+		let backgroundImage = new Image();
+		let userImage = null;
+		let cropX, cropY, cropWidth, cropHeight;
+		let cropImageOriginal = new Image();
+		
+		let isDragging = false;
+		let isResizing = false;
+		let dragCorner = '';
+		let startX, startY;
+		
+		// Set initial background image based on theme
+		function setBackgroundImage() {
+		    const currentMode = htmlElement.getAttribute('data-mode');
+		    if (currentMode === 'light') {
+		        backgroundImage.src = '1.PNG';
+		    } else {
+		        backgroundImage.src = '1.PNG';
+		    }
+		}
+		
+		canvas.width = BULLETIN_WIDTH;
+		canvas.height = BULLETIN_HEIGHT;
+		
+		function convertNumberToChinese(numStr) {
+		    const num = parseInt(numStr, 10);
+		    if (isNaN(num) || num < 0 || num > 99) {
+		        return numStr;
+		    }
+		
+		    const digits = ['零', '一', '二', '三', '四', '五', '六', '七', '八', '九'];
+		    if (num < 10) {
+		        return digits[num];
+		    }
+		    if (num === 10) {
+		        return '十';
+		    }
+		    if (num < 20) {
+		        return `十${digits[num % 10]}`;
+		    }
+		    if (num % 10 === 0) {
+		        return `${digits[Math.floor(num / 10)]}十`;
+		    }
+		    return `${digits[Math.floor(num / 10)]}十${digits[num % 10]}`;
+		}
+		
+		// This function now handles both newlines and text wrapping
+		function drawText(context, text, x, y, maxWidth, lineHeight) {
+		    const lines = text.split('\n');
+		    let currentY = y;
+		    for (const line of lines) {
+		        let tempLine = '';
+		        const words = line.split('');
+		        for (let i = 0; i < words.length; i++) {
+		            const testLine = tempLine + words[i];
+		            const testWidth = context.measureText(testLine).width;
+		            if (testWidth > maxWidth && tempLine.length > 0) {
+		                context.fillText(tempLine, x, currentY);
+		                tempLine = words[i];
+		                currentY += lineHeight;
+		            } else {
+		                tempLine = testLine;
+		            }
+		        }
+		        context.fillText(tempLine, x, currentY);
+		        currentY += lineHeight;
+		    }
+		}
+		
+		function drawCanvas() {
+		    ctx.clearRect(0, 0, canvas.width, canvas.height);
+		
+		    const imgRatio = backgroundImage.width / backgroundImage.height;
+		    const canvasRatio = canvas.width / canvas.height;
+		    let drawWidth, drawHeight, drawX, drawY;
+		
+		    if (imgRatio > canvasRatio) {
+		        drawHeight = canvas.height;
+		        drawWidth = drawHeight * imgRatio;
+		        drawX = (canvas.width - drawWidth) / 2;
+		        drawY = 0;
+		    } else {
+		        drawWidth = canvas.width;
+		        drawHeight = drawWidth / imgRatio;
+		        drawX = 0;
+		        drawY = (canvas.height - drawHeight) / 2;
+		    }
+		    ctx.drawImage(backgroundImage, drawX, drawY, drawWidth, drawHeight);
+		
+		    if (userImage) {
+		        // 使用精确的常量尺寸绘制用户图片
+		        ctx.drawImage(userImage, TARGET_X, TARGET_Y, USER_IMAGE_WIDTH, USER_IMAGE_HEIGHT);
+		    }
+		
+		    const weekNumber = text1Input.value;
+		    const chineseWeek = convertNumberToChinese(weekNumber);
+		    const finalText1 = `第${chineseWeek}周`;
+		    ctx.fillStyle = '#FFFFFF';
+		    ctx.font = 'bold 160px sans-serif';
+		    ctx.textAlign = 'left';
+		    ctx.fillText(finalText1, 256, 1384);
+		
+		    // ====== Text 2 (班级介绍) ======
+		    const text2 = text2Input.value;
+		    ctx.fillStyle = '#FFFFFF';
+		    ctx.font = '80px sans-serif';
+		    ctx.textAlign = 'left';
+		    // 从设置输入框读取坐标，如果无效则使用默认值
+		    const x2 = parseInt(text2XInput.value) || 2350;
+		    const y2 = parseInt(text2YInput.value) || 1892; 
+		    const maxWidth = 1930;
+		    const lineHeight = 140;
+		    drawText(ctx, text2, x2, y2, maxWidth, lineHeight);
+		
+		    // ====== Text 3 (人员信息) ======
+		    const text3 = text3Input.value;
+		    ctx.fillStyle = '#FFFFFF';
+		    ctx.font = '80px sans-serif';
+		    ctx.textAlign = 'left';
+		    // 从设置输入框读取坐标，如果无效则使用默认值
+		    const x3 = parseInt(text3XInput.value) || 270;
+		    let y3 = parseInt(text3YInput.value) || 2240;
+		    const maxWidth3 = 1520;
+		    const lineHeight3 = 120;
+		
+		    drawText(ctx, text3, x3, y3, maxWidth3, lineHeight3);
+		}
+		
+		function drawCropInterface() {
+		    if (cropCanvas.offsetWidth === 0 || cropCanvas.offsetHeight === 0) {
+		        setTimeout(drawCropInterface, 50);
+		        return;
+		    }
+		
+		    cropCanvas.width = cropCanvas.offsetWidth;
+		    cropCanvas.height = cropCanvas.offsetHeight;
+		
+		    const imgRatio = cropImageOriginal.width / cropImageOriginal.height;
+		    const canvasRatio = cropCanvas.width / cropCanvas.height;
+		    let drawWidth, drawHeight;
+		    let offsetX = 0, offsetY = 0;
+		
+		    // 修正绘图逻辑以保持纵横比
+		    if (imgRatio > canvasRatio) {
+		        // 如果图片比画布更宽，则以画布高度为基准缩放
+		        drawHeight = cropCanvas.height;
+		        drawWidth = drawHeight * imgRatio;
+		        
+		        offsetX = (cropCanvas.width - drawWidth) / 2;
+		    } else {
+		        // 否则以画布宽度为基准缩放
+		        drawWidth = cropCanvas.width;
+		        drawHeight = drawWidth / imgRatio;
+		        offsetY = (cropCanvas.height - drawHeight) / 2;
+		    }
+		
+		    cropCtx.drawImage(cropImageOriginal, offsetX, offsetY, drawWidth, drawHeight);
+		
+		    let selectionWidth, selectionHeight;
+		    // 修正裁剪框尺寸，使其始终为 16:9
+		    if (drawWidth / drawHeight > CROP_RATIO) {
+		        selectionHeight = drawHeight;
+		        selectionWidth = drawHeight * CROP_RATIO;
+		    } else {
+		        selectionWidth = drawWidth;
+		        selectionHeight = drawWidth / CROP_RATIO;
+		    }
+		
+		    if (!cropWidth || !cropHeight) {
+		        cropWidth = selectionWidth;
+		        cropHeight = selectionHeight;
+		        cropX = (cropCanvas.width - cropWidth) / 2;
+		        cropY = (cropCanvas.height - cropHeight) / 2;
+		    }
+		
+		    cropCtx.fillStyle = 'rgba(0, 0, 0, 0.5)';
+		    cropCtx.fillRect(0, 0, cropX, cropCanvas.height);
+		    cropCtx.fillRect(cropX + cropWidth, 0, cropCanvas.width - (cropX + cropWidth), cropCanvas.height);
+		    cropCtx.fillRect(cropX, 0, cropWidth, cropY);
+		    cropCtx.fillRect(cropX, cropY + cropHeight, cropWidth, cropCanvas.height - (cropY + cropHeight));
+		
+		    cropCtx.strokeStyle = 'white';
+		    cropCtx.lineWidth = 2;
+		    cropCtx.strokeRect(cropX, cropY, cropWidth, cropHeight);
+		
+		    cropCtx.fillStyle = 'white';
+		    const corners = [
+		        { x: cropX, y: cropY },
+		        { x: cropX + cropWidth, y: cropY },
+		        { x: cropX, y: cropY + cropHeight },
+		        { x: cropX + cropWidth, y: cropY + cropHeight }
+		    ];
+		    corners.forEach(corner => {
+		        cropCtx.beginPath();
+		        cropCtx.arc(corner.x, corner.y, HANDLE_SIZE / 2, 0, 2 * Math.PI);
+		        cropCtx.fill();
+		    });
+		}
+		
+		function isNearHandle(x, y) {
+		    if (Math.hypot(x - cropX, y - cropY) < HIT_AREA) return 'topLeft';
+		    if (Math.hypot(x - (cropX + cropWidth), y - cropY) < HIT_AREA) return 'topRight';
+		    if (Math.hypot(x - cropX, y - (cropY + cropHeight)) < HIT_AREA) return 'bottomLeft';
+		    if (Math.hypot(x - (cropX + cropWidth), y - (cropY + cropHeight)) < HIT_AREA) return 'bottomRight';
+		    return '';
+		}
+		
+		cropCanvas.addEventListener('mousedown', (e) => {
+		    startX = e.offsetX;
+		    startY = e.offsetY;
+		    dragCorner = isNearHandle(startX, startY);
+		
+		    if (dragCorner) {
+		        isResizing = true;
+		    } else if (startX > cropX && startX < cropX + cropWidth && startY > cropY && startY < cropY + cropHeight) {
+		        isDragging = true;
+		    }
+		});
+		
+		cropCanvas.addEventListener('mousemove', (e) => {
+		    const dx = e.offsetX - startX;
+		    const dy = e.offsetY - startY;
+		
+		    if (isResizing) {
+		        let newWidth, newHeight, newX = cropX, newY = cropY;
+		
+		        switch (dragCorner) {
+		            case 'topLeft':
+		                newWidth = cropWidth - dx;
+		                newHeight = newWidth / CROP_RATIO;
+		                newX = cropX + dx;
+		                newY = cropY + (cropHeight - newHeight);
+		                break;
+		            case 'topRight':
+		                newWidth = cropWidth + dx;
+		                newHeight = newWidth / CROP_RATIO;
+		                newY = cropY + (cropHeight - newHeight);
+		                break;
+		            case 'bottomLeft':
+		                newWidth = cropWidth - dx;
+		                newHeight = newWidth / CROP_RATIO;
+		                newX = cropX + dx;
+		                break;
+		            case 'bottomRight':
+		                newWidth = cropWidth + dx;
+		                newHeight = newWidth / CROP_RATIO;
+		                break;
+		        }
+		
+		        if (newWidth > 50 && newHeight > 50) {
+		            cropWidth = newWidth;
+		            cropHeight = newHeight;
+		            cropX = newX;
+		            cropY = newY;
+		        }
+		        drawCropInterface();
+		    } else if (isDragging) {
+		        cropX += dx;
+		        cropY += dy;
+		
+		        cropX = Math.max(0, Math.min(cropX, cropCanvas.width - cropWidth));
+		        cropY = Math.max(0, Math.min(cropY, cropCanvas.height - cropHeight));
+		        drawCropInterface();
+		    } else {
+		        const handle = isNearHandle(e.offsetX, e.offsetY);
+		        if (handle === 'topLeft' || handle === 'bottomRight') {
+		            cropCanvas.style.cursor = 'nwse-resize';
+		        } else if (handle === 'topRight' || handle === 'bottomLeft') {
+		            cropCanvas.style.cursor = 'nesw-resize';
+		        } else if (e.offsetX > cropX && e.offsetX < cropX + cropWidth && e.offsetY > cropY && e.offsetY < cropY + cropHeight) {
+		            cropCanvas.style.cursor = 'move';
+		        } else {
+		            cropCanvas.style.cursor = 'default';
+		        }
+		    }
+		    startX = e.offsetX;
+		    startY = e.offsetY;
+		});
+		
+		cropCanvas.addEventListener('mouseup', () => {
+		    isDragging = false;
+		    isResizing = false;
+		    dragCorner = '';
+		});
+		
+		imageInput.addEventListener('change', (event) => {
+		    const file = event.target.files[0];
+		    if (!file) return;
+		
+		    const reader = new FileReader();
+		    reader.onload = (e) => {
+		        cropImageOriginal.onload = () => {
+		            cropX = 0;
+		            cropY = 0;
+		            cropWidth = 0;
+		            cropHeight = 0;
+		
+		            cropModal.style.display = 'flex';
+		
+		            setTimeout(drawCropInterface, 50);
+		        };
+		        cropImageOriginal.src = e.target.result;
+		    };
+		    reader.readAsDataURL(file);
+		});
+		
+		confirmCropBtn.addEventListener('click', () => {
+		    const imgRatio = cropImageOriginal.width / cropImageOriginal.height;
+		    const canvasRatio = cropCanvas.width / cropCanvas.height;
+		    let drawWidth, drawHeight;
+		    let offsetX = 0, offsetY = 0;
+		
+		    // 修正绘图逻辑以保持纵横比
+		    if (imgRatio > canvasRatio) {
+		        drawHeight = cropCanvas.height;
+		        drawWidth = drawHeight * imgRatio;
+		        offsetX = (cropCanvas.width - drawWidth) / 2;
+		    } else {
+		        drawWidth = cropCanvas.width;
+		        drawHeight = drawWidth / imgRatio;
+		        offsetY = (cropCanvas.height - drawHeight) / 2;
+		    }
+		
+		    const sx = (cropX - offsetX) * (cropImageOriginal.width / drawWidth);
+		    const sy = (cropY - offsetY) * (cropImageOriginal.height / drawHeight);
+		    const sWidth = cropWidth * (cropImageOriginal.width / drawWidth);
+		    const sHeight = cropHeight * (cropImageOriginal.height / drawHeight);
+		
+		    const tempCanvas = document.createElement('canvas');
+		    // 使用精确的常量尺寸创建临时画布，以确保 16:9 比例
+		    tempCanvas.width = USER_IMAGE_WIDTH;
+		    tempCanvas.height = USER_IMAGE_HEIGHT;
+		    const tempCtx = tempCanvas.getContext('2d');
+		
+		    // 绘制时，将裁剪区域精确缩放至新的固定尺寸，避免拉伸
+		    tempCtx.drawImage(
+		        cropImageOriginal,
+		        sx, sy, sWidth, sHeight,
+		        0, 0, USER_IMAGE_WIDTH, USER_IMAGE_HEIGHT
+		    );
+		
+		    userImage = new Image();
+		    userImage.src = tempCanvas.toDataURL();
+		
+		    cropModal.style.display = 'none';
+		
+		    userImage.onload = () => {
+		        drawCanvas();
+		    };
+		});
+		
+		saveImageBtn.addEventListener('click', () => {
+		    const link = document.createElement('a');
+		    link.download = '升旗快报.png';
+		    link.href = canvas.toDataURL('image/png');
+		    link.click();
+		    link.remove();
+		});
+		
+		// 监听所有输入变化以实时更新 Canvas
+		text1Input.addEventListener('input', drawCanvas);
+		text2Input.addEventListener('input', drawCanvas);
+		text3Input.addEventListener('input', drawCanvas);
+		
+		text2XInput.addEventListener('input', drawCanvas);
+		text2YInput.addEventListener('input', drawCanvas);
+		text3XInput.addEventListener('input', drawCanvas);
+		text3YInput.addEventListener('input', drawCanvas);
+		
+		backgroundImage.onload = () => {
+		    drawCanvas();
+		};
+		
+		// Call setBackgroundImage initially and on theme changes
+		htmlElement.addEventListener('transitionend', (event) => {
+		    if (event.propertyName === 'color') {
+		        setBackgroundImage();
+		    }
+		});
+		setBackgroundImage();
+		
+		    
+		                                    
+		                                    
+	</script>
+</body>
+</html>
